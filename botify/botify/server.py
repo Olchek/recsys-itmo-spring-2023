@@ -16,6 +16,7 @@ from botify.recommenders.sticky_artist import StickyArtist
 from botify.recommenders.toppop import TopPop
 from botify.recommenders.indexed import Indexed
 from botify.recommenders.contextual import Contextual
+from botify.recommenders.contextual_own import ContextualOwn
 from botify.track import Catalog
 
 import numpy as np
@@ -40,14 +41,22 @@ data_logger = DataLogger(app)
 catalog = Catalog(app).load(
     app.config["TRACKS_CATALOG"], app.config["TOP_TRACKS_CATALOG"], app.config["TRACKS_WITH_DIVERSE_RECS_CATALOG"]
 )
+my_catalog = Catalog(app).load(
+    app.config["MY_TRACKS_CATALOG"], app.config["TOP_TRACKS_CATALOG"], app.config["TRACKS_WITH_DIVERSE_RECS_CATALOG"]
+)
 catalog.upload_tracks(tracks_redis.connection, tracks_with_diverse_recs_redis.connection)
 catalog.upload_artists(artists_redis.connection)
 catalog.upload_recommendations(recommendations_redis.connection)
 catalog.upload_recommendations(recommendations_ub_redis.connection, "RECOMMENDATIONS_UB_FILE_PATH")
+my_catalog.upload_tracks(tracks_redis.connection, tracks_with_diverse_recs_redis.connection)
+my_catalog.upload_artists(artists_redis.connection)
+my_catalog.upload_recommendations(recommendations_redis.connection)
+my_catalog.upload_recommendations(recommendations_ub_redis.connection, "RECOMMENDATIONS_UB_FILE_PATH")
 
 parser = reqparse.RequestParser()
 parser.add_argument("track", type=int, location="json", required=True)
 parser.add_argument("time", type=float, location="json", required=True)
+first_session_track = {}
 
 
 class Hello(Resource):
@@ -69,26 +78,21 @@ class Track(Resource):
 
 class NextTrack(Resource):
     def post(self, user: int):
+        global first_session_track
         start = time.time()
 
         args = parser.parse_args()
 
+        track = first_session_track.get(user, {})
+        if not track or args.time > 0.5:
+            first_session_track[user] = [args.track, args.time]
         # TODO Seminar 6 step 6: Wire RECOMMENDERS A/B experiment
-        treatment = Experiments.RECOMMENDERS.assign(user)
+        treatment = Experiments.CONTEXTUAL.assign(user)
         if treatment == Treatment.T1:
-            recommender = StickyArtist(tracks_redis.connection, artists_redis.connection, catalog)
-        elif treatment == Treatment.T2:
-            recommender = TopPop(tracks_redis.connection, catalog.top_tracks[:100])
-        elif treatment == Treatment.T3:
-            recommender = Indexed(tracks_redis.connection, recommendations_ub_redis.connection, catalog)
-        elif treatment == Treatment.T4:
-            recommender = Indexed(tracks_redis.connection, recommendations_redis.connection, catalog)
-        elif treatment == Treatment.T5:
-            recommender = Contextual(tracks_redis.connection, catalog)
-        elif treatment == Treatment.T6:
-            recommender = Contextual(tracks_with_diverse_recs_redis.connection, catalog)
+            recommender = Contextual(tracks_with_diverse_recs_redis.connection, my_catalog, first_session_track, catalog.top_tracks)
         else:
-            recommender = Random(tracks_redis.connection)
+            recommender = Contextual(tracks_with_diverse_recs_redis.connection, catalog)
+            #recommender = Random(tracks_redis.connection)
 
         recommendation = recommender.recommend_next(user, args.track, args.time)
 
@@ -108,6 +112,7 @@ class NextTrack(Resource):
 
 class LastTrack(Resource):
     def post(self, user: int):
+        global first_session_track
         start = time.time()
         args = parser.parse_args()
         data_logger.log(
@@ -120,6 +125,8 @@ class LastTrack(Resource):
                 time.time() - start,
             ),
         )
+        if user in first_session_track:
+            del first_session_track[user]
         return {"user": user}
 
 
