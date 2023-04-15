@@ -16,10 +16,7 @@ from botify.recommenders.sticky_artist import StickyArtist
 from botify.recommenders.toppop import TopPop
 from botify.recommenders.indexed import Indexed
 from botify.recommenders.contextual import Contextual
-from botify.recommenders.contextual_own import ContextualOwn
 from botify.track import Catalog
-
-import numpy as np
 
 root = logging.getLogger()
 root.setLevel("INFO")
@@ -80,7 +77,6 @@ class NextTrack(Resource):
     def post(self, user: int):
         global first_session_track
         start = time.time()
-
         args = parser.parse_args()
 
         track = first_session_track.get(user, {})
@@ -92,7 +88,7 @@ class NextTrack(Resource):
             recommender = Contextual(tracks_with_diverse_recs_redis.connection, my_catalog, first_session_track, catalog.top_tracks)
         else:
             recommender = Contextual(tracks_with_diverse_recs_redis.connection, catalog)
-            #recommender = Random(tracks_redis.connection)
+
 
         recommendation = recommender.recommend_next(user, args.track, args.time)
 
@@ -105,8 +101,7 @@ class NextTrack(Resource):
                 args.time,
                 time.time() - start,
                 recommendation,
-            ),
-        )
+            ), )
         return {"user": user, "track": recommendation}
 
 
